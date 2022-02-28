@@ -1,43 +1,54 @@
-import { PublicKey } from "@solana/web3.js"
-import TOKENS from '../tokens.json';
-import { AssetRate, ProtocolRates, toRate } from '../types';
+import { Connection, PublicKey } from "@solana/web3.js";
+import TOKENS from "../tokens.json";
+import { AssetRate, ProtocolRates } from "../types";
+import FranciumSDK from "francium-sdk";
 
-export async function fetch(): Promise<ProtocolRates> {
-  const url = "https://francium.io/app/lend";
-
-  const puppeteer = require("puppeteer");
-  const browser = await puppeteer.launch();
-  const page = await browser.newPage();
-  await page.goto(url, { timeout: 15000 });
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  const content = await page.content();
-  await browser.close();
-
-  const cheerio = require("cheerio");
-  const $ = cheerio.load(content);
-  let rates: AssetRate[] = [];
-  $(".ant-table-row").map((i, el) => {
-    const asset: string = toAsset($(el).find("td div").first().text());
-    const token = TOKENS.find((token) => { return token.symbol === asset; });
-    if (token) {
-      rates.push({
-        asset: token.symbol,
-        mint: new PublicKey(token.mint),
-        deposit: toRate($(el).find("td div p").first().text()),
-        borrow: undefined,
-      });
-    }
+export async function fetch() {
+  const RPC_NODE = "https://api.mainnet-beta.solana.com";
+  const fr = new FranciumSDK({
+    connection: new Connection(RPC_NODE),
   });
+  const reserves = await fr.getLendingPoolInfo();
+  const rates: AssetRate[] = reserves
+    .map((reserve) => {
+      const token = TOKENS.find((token) => {
+        return token.symbol === toAsset(reserve.pool);
+      });
+      // francium values are returned as whole numbers, divided by 100 convert to decimal for uniformity
+      if (token) {
+        return {
+          asset: token!.symbol,
+          mint: new PublicKey(token!.mint),
+          deposit: reserve.apy / 100,
+          borrow: reserve.borrowInterest / 100,
+        };
+      }
+    })
+    .filter((token) => {
+      return token !== undefined;
+    })
+    .map((token) => {
+      return token as AssetRate;
+    });
 
   return {
-    protocol: 'francium',
+    protocol: "francium",
     rates,
   } as ProtocolRates;
 }
 
 function toAsset(asset: string): string {
   switch (asset) {
-    case 'weWETH (whETH)': return "whETH";
-    default: return asset;
+    case "stSOL":
+      return "Lido Staked SOL";
+    case "weWETH":
+      return "Ether (Wormhole)";
+    case "wUST":
+      return "UST (Wormhole)";
+    case "whETH":
+      return "Ether (Wormhole)";
+
+    default:
+      return asset;
   }
 }
